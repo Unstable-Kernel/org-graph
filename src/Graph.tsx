@@ -3,198 +3,251 @@ import * as d3 from 'd3';
 import { nodes, links, RepoNode } from './data';
 
 const COLORS: Record<string, string> = {
-  core: '#4ade80',
-  behavior: '#60a5fa',
+  core: '#38bd7e',
+  behavior: '#6366f1',
   infra: '#f59e0b',
   content: '#a78bfa',
-  frontend: '#f87171',
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  active: 'Active Development',
-  stable: 'Stable',
-  wip: 'Work in Progress',
+  frontend: '#ef4444',
 };
 
 interface SimNode extends d3.SimulationNodeDatum {
-  id: string;
-  label: string;
-  description: string;
-  url: string;
-  deployedUrl?: string;
-  tech: string[];
-  category: string;
-  status: string;
+  id: string; label: string; description: string; url: string;
+  deployedUrl?: string; tech: string[]; category: string; status: string;
 }
-
-interface SimLink extends d3.SimulationLinkDatum<SimNode> {
-  label: string;
-  type: string;
-}
+interface SimLink extends d3.SimulationLinkDatum<SimNode> { label: string; type: string; }
 
 export function Graph() {
-  const svgRef = useRef<SVGSVGElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [selected, setSelected] = useState<RepoNode | null>(null);
+  const simRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
+  const nodesRef = useRef<SimNode[]>([]);
+  const linksRef = useRef<SimLink[]>([]);
+  const frameRef = useRef(0);
 
   useEffect(() => {
-    if (!svgRef.current) return;
-    const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
-
-    const width = window.innerWidth;
-    const height = window.innerHeight;
-    svg.attr('width', width).attr('height', height);
+    const canvas = canvasRef.current!;
+    const ctx = canvas.getContext('2d')!;
+    let w = window.innerWidth;
+    let h = window.innerHeight;
+    canvas.width = w * 2; canvas.height = h * 2;
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    ctx.scale(2, 2);
 
     const simNodes: SimNode[] = nodes.map(n => ({ ...n }));
     const simLinks: SimLink[] = links.map(l => ({ source: l.source, target: l.target, label: l.label, type: l.type }));
+    nodesRef.current = simNodes;
+    linksRef.current = simLinks;
 
-    const simulation = d3.forceSimulation(simNodes)
-      .force('link', d3.forceLink<SimNode, SimLink>(simLinks).id(d => d.id).distance(160))
-      .force('charge', d3.forceManyBody().strength(-800))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide().radius(55));
+    const sim = d3.forceSimulation(simNodes)
+      .force('link', d3.forceLink<SimNode, SimLink>(simLinks).id(d => d.id).distance(180))
+      .force('charge', d3.forceManyBody().strength(-900))
+      .force('center', d3.forceCenter(w / 2, h / 2))
+      .force('collision', d3.forceCollide().radius(60));
+    simRef.current = sim;
 
-    // Glow filter
-    const defs = svg.append('defs');
-    const filter = defs.append('filter').attr('id', 'glow');
-    filter.append('feGaussianBlur').attr('stdDeviation', '3').attr('result', 'blur');
-    filter.append('feMerge').selectAll('feMergeNode')
-      .data(['blur', 'SourceGraphic']).join('feMergeNode').attr('in', d => d);
+    // Animation loop
+    let animId: number;
+    const draw = () => {
+      frameRef.current++;
+      const t = frameRef.current * 0.02;
+      ctx.clearRect(0, 0, w, h);
 
-    // Links
-    const link = svg.append('g')
-      .selectAll('line')
-      .data(simLinks)
-      .join('line')
-      .attr('stroke', d => d.type === 'depends' ? '#4ade8066' : d.type === 'uses' ? '#60a5fa66' : '#a78bfa66')
-      .attr('stroke-width', 1.5);
+      // Draw links with pulse animation
+      for (const link of simLinks) {
+        const s = link.source as SimNode;
+        const e = link.target as SimNode;
+        if (!s.x || !e.x) continue;
+        const color = link.type === 'depends' ? '#38bd7e' : link.type === 'uses' ? '#6366f1' : '#a78bfa';
+        const pulse = 0.15 + Math.sin(t + (s.x! * 0.01)) * 0.08;
+        ctx.beginPath();
+        ctx.moveTo(s.x!, s.y!);
+        ctx.lineTo(e.x!, e.y!);
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = pulse;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
 
-    // Nodes
-    const node = svg.append('g')
-      .selectAll('g')
-      .data(simNodes)
-      .join('g')
-      .style('cursor', 'pointer')
-      .call(d3.drag<any, SimNode>()
-        .on('start', (event, d) => { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-        .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
-        .on('end', (event, d) => { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
-      )
-      .on('click', (_, d) => { setSelected(d as unknown as RepoNode); });
+        // Traveling particle along edge
+        const progress = (Math.sin(t * 0.8 + (s.x! * 0.005)) + 1) / 2;
+        const px = s.x! + (e.x! - s.x!) * progress;
+        const py = s.y! + (e.y! - s.y!) * progress;
+        ctx.beginPath();
+        ctx.arc(px, py, 2, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.6;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
 
-    // Outer ring
-    node.append('circle')
-      .attr('r', d => d.id === 'kernel' ? 32 : 24)
-      .attr('fill', 'transparent')
-      .attr('stroke', d => COLORS[d.category])
-      .attr('stroke-width', 2)
-      .attr('filter', 'url(#glow)');
+      // Draw nodes
+      for (const node of simNodes) {
+        if (!node.x) continue;
+        const color = COLORS[node.category] || '#888';
+        const r = node.id === 'kernel' ? 30 : 22;
+        const breathe = 1 + Math.sin(t + node.x! * 0.01) * 0.04;
 
-    // Inner fill
-    node.append('circle')
-      .attr('r', d => d.id === 'kernel' ? 28 : 20)
-      .attr('fill', d => COLORS[d.category] + '18')
-      .attr('stroke', 'none');
+        // Outer glow
+        const grad = ctx.createRadialGradient(node.x!, node.y!, r * 0.5, node.x!, node.y!, r * 2.5 * breathe);
+        grad.addColorStop(0, color + '20');
+        grad.addColorStop(1, 'transparent');
+        ctx.beginPath();
+        ctx.arc(node.x!, node.y!, r * 2.5 * breathe, 0, Math.PI * 2);
+        ctx.fillStyle = grad;
+        ctx.fill();
 
-    // Labels
-    node.append('text')
-      .text(d => d.label)
-      .attr('text-anchor', 'middle')
-      .attr('dy', '0.35em')
-      .attr('font-size', d => d.id === 'kernel' ? '11px' : '10px')
-      .attr('font-weight', '600')
-      .attr('fill', d => COLORS[d.category])
-      .style('pointer-events', 'none');
+        // Ring
+        ctx.beginPath();
+        ctx.arc(node.x!, node.y!, r * breathe, 0, Math.PI * 2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
 
-    simulation.on('tick', () => {
-      link
-        .attr('x1', d => (d.source as SimNode).x!)
-        .attr('y1', d => (d.source as SimNode).y!)
-        .attr('x2', d => (d.target as SimNode).x!)
-        .attr('y2', d => (d.target as SimNode).y!);
-      node.attr('transform', d => `translate(${d.x},${d.y})`);
+        // Inner
+        ctx.beginPath();
+        ctx.arc(node.x!, node.y!, r * 0.7 * breathe, 0, Math.PI * 2);
+        ctx.fillStyle = color + '12';
+        ctx.fill();
+
+        // Label
+        ctx.font = `${node.id === 'kernel' ? '600 12px' : '500 10px'} Syne, sans-serif`;
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(node.label, node.x!, node.y!);
+      }
+
+      animId = requestAnimationFrame(draw);
+    };
+    sim.on('tick', () => {});
+    draw();
+
+    // Click detection
+    const handleClick = (ev: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = ev.clientX - rect.left;
+      const my = ev.clientY - rect.top;
+      for (const node of simNodes) {
+        if (!node.x) continue;
+        const dx = mx - node.x!;
+        const dy = my - node.y!;
+        if (dx * dx + dy * dy < 900) {
+          setSelected(node as unknown as RepoNode);
+          return;
+        }
+      }
+      setSelected(null);
+    };
+    canvas.addEventListener('click', handleClick);
+
+    // Drag
+    let dragging: SimNode | null = null;
+    canvas.addEventListener('mousedown', (ev) => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = ev.clientX - rect.left;
+      const my = ev.clientY - rect.top;
+      for (const node of simNodes) {
+        if (!node.x) continue;
+        if ((mx - node.x!) ** 2 + (my - node.y!) ** 2 < 900) {
+          dragging = node;
+          sim.alphaTarget(0.3).restart();
+          break;
+        }
+      }
+    });
+    canvas.addEventListener('mousemove', (ev) => {
+      if (!dragging) return;
+      const rect = canvas.getBoundingClientRect();
+      dragging.fx = ev.clientX - rect.left;
+      dragging.fy = ev.clientY - rect.top;
+    });
+    canvas.addEventListener('mouseup', () => {
+      if (dragging) { dragging.fx = null; dragging.fy = null; dragging = null; sim.alphaTarget(0); }
     });
 
-    return () => { simulation.stop(); };
+    const handleResize = () => {
+      w = window.innerWidth; h = window.innerHeight;
+      canvas.width = w * 2; canvas.height = h * 2;
+      canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+      ctx.scale(2, 2);
+      sim.force('center', d3.forceCenter(w / 2, h / 2));
+      sim.alpha(0.3).restart();
+    };
+    window.addEventListener('resize', handleResize);
+
+    return () => { cancelAnimationFrame(animId); sim.stop(); canvas.removeEventListener('click', handleClick); window.removeEventListener('resize', handleResize); };
   }, []);
 
   return (
     <div style={{ position: 'relative', width: '100vw', height: '100vh' }}>
-      <svg ref={svgRef} style={{ position: 'absolute', inset: 0 }} />
+      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, cursor: 'grab' }} />
 
       {/* Header */}
-      <div style={{ position: 'fixed', top: 24, left: 24, zIndex: 10 }}>
-        <h1 style={{ color: '#fff', fontSize: '18px', fontWeight: 700, margin: 0 }}>
-          Unstable Kernel
+      <div style={{ position: 'fixed', top: 28, left: 32, zIndex: 10, animation: 'fadeIn 1s ease' }}>
+        <h1 style={{ color: '#fff', fontSize: '16px', fontWeight: 800, letterSpacing: '-0.5px' }}>
+          UNSTABLE KERNEL
         </h1>
-        <p style={{ color: '#888', fontSize: '12px', marginTop: 4 }}>
-          Autonomous Intelligence Coordination Engine
+        <p style={{ color: '#475569', fontSize: '11px', marginTop: 4, fontFamily: "'JetBrains Mono', monospace" }}>
+          // system dependency map
         </p>
       </div>
 
+      {/* Nav */}
+      <div style={{ position: 'fixed', top: 28, right: 32, display: 'flex', gap: 10, zIndex: 10, animation: 'fadeIn 1s ease 0.2s both' }}>
+        <a href="https://unstable-kernel.github.io/visualization/" target="_blank" rel="noopener"
+          style={{ padding: '7px 14px', background: 'rgba(56,189,126,0.08)', border: '1px solid rgba(56,189,126,0.2)', borderRadius: 6, color: '#38bd7e', fontSize: '11px', textDecoration: 'none', fontWeight: 600 }}>
+          Simulation
+        </a>
+        <a href="https://unstable-kernel.github.io/docs/" target="_blank" rel="noopener"
+          style={{ padding: '7px 14px', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: 6, color: '#6366f1', fontSize: '11px', textDecoration: 'none', fontWeight: 600 }}>
+          Docs
+        </a>
+        <a href="https://github.com/Unstable-Kernel" target="_blank" rel="noopener"
+          style={{ padding: '7px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, color: '#94a3b8', fontSize: '11px', textDecoration: 'none', fontWeight: 600 }}>
+          GitHub
+        </a>
+      </div>
+
       {/* Legend */}
-      <div style={{ position: 'fixed', bottom: 24, left: 24, display: 'flex', gap: 14, fontSize: '11px', color: '#888', zIndex: 10 }}>
+      <div style={{ position: 'fixed', bottom: 28, left: 32, display: 'flex', gap: 16, fontSize: '10px', color: '#475569', zIndex: 10, fontFamily: "'JetBrains Mono', monospace" }}>
         {Object.entries(COLORS).map(([cat, color]) => (
           <span key={cat} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}` }} />
             {cat}
           </span>
         ))}
       </div>
 
-      {/* Quick links */}
-      <div style={{ position: 'fixed', top: 24, right: 24, display: 'flex', gap: 10, zIndex: 10 }}>
-        <a href="https://unstable-kernel.github.io/visualization/" target="_blank" rel="noopener"
-          style={{ padding: '6px 12px', background: '#4ade8020', border: '1px solid #4ade8040', borderRadius: 6, color: '#4ade80', fontSize: '11px', textDecoration: 'none' }}>
-          Live Simulation
-        </a>
-        <a href="https://unstable-kernel.github.io/docs/" target="_blank" rel="noopener"
-          style={{ padding: '6px 12px', background: '#a78bfa20', border: '1px solid #a78bfa40', borderRadius: 6, color: '#a78bfa', fontSize: '11px', textDecoration: 'none' }}>
-          Documentation
-        </a>
-        <a href="https://github.com/Unstable-Kernel" target="_blank" rel="noopener"
-          style={{ padding: '6px 12px', background: '#ffffff10', border: '1px solid #ffffff20', borderRadius: 6, color: '#ccc', fontSize: '11px', textDecoration: 'none' }}>
-          GitHub
-        </a>
-      </div>
-
       {/* Info Panel */}
       {selected && (
         <div style={{
-          position: 'fixed', right: 24, top: 80, width: 300,
-          background: 'rgba(10, 14, 20, 0.95)', border: `1px solid ${COLORS[selected.category]}40`,
-          borderRadius: 12, padding: 20, zIndex: 20, backdropFilter: 'blur(12px)',
+          position: 'fixed', right: 32, top: 80, width: 300,
+          background: 'rgba(3, 5, 8, 0.95)', border: `1px solid ${COLORS[selected.category]}22`,
+          borderRadius: 14, padding: 24, zIndex: 20, backdropFilter: 'blur(16px)',
+          animation: 'slideIn 0.3s ease',
         }}>
+          <style>{`@keyframes slideIn { from { opacity:0; transform:translateX(20px); } to { opacity:1; transform:translateX(0); } } @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }`}</style>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h2 style={{ color: COLORS[selected.category], fontSize: '16px', fontWeight: 700, margin: 0 }}>
+            <h2 style={{ color: COLORS[selected.category], fontSize: '18px', fontWeight: 800, letterSpacing: '-0.5px' }}>
               {selected.label}
             </h2>
-            <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: '16px' }}>x</button>
+            <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: '18px', fontFamily: 'monospace' }}>x</button>
           </div>
-
-          <p style={{ color: '#aaa', fontSize: '12px', marginTop: 10, lineHeight: 1.5 }}>
-            {selected.description}
-          </p>
-
-          <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <p style={{ color: '#94a3b8', fontSize: '12px', marginTop: 12, lineHeight: 1.7 }}>{selected.description}</p>
+          <div style={{ marginTop: 14, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             {selected.tech.map(t => (
-              <span key={t} style={{ padding: '2px 8px', background: '#ffffff10', borderRadius: 4, fontSize: '10px', color: '#ccc' }}>{t}</span>
+              <span key={t} style={{ padding: '3px 8px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: 4, fontSize: '10px', color: '#64748b', fontFamily: "'JetBrains Mono', monospace" }}>{t}</span>
             ))}
           </div>
-
-          <div style={{ marginTop: 10, fontSize: '10px', color: '#888' }}>
-            Status: {STATUS_LABEL[selected.status] || selected.status}
-          </div>
-
-          <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
+          <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
             <a href={selected.url} target="_blank" rel="noopener"
-              style={{ padding: '5px 10px', background: '#ffffff10', border: '1px solid #ffffff20', borderRadius: 6, color: '#ccc', fontSize: '11px', textDecoration: 'none' }}>
+              style={{ padding: '6px 12px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 6, color: '#94a3b8', fontSize: '11px', textDecoration: 'none', fontWeight: 600 }}>
               Source
             </a>
             {selected.deployedUrl && (
               <a href={selected.deployedUrl} target="_blank" rel="noopener"
-                style={{ padding: '5px 10px', background: COLORS[selected.category] + '20', border: `1px solid ${COLORS[selected.category]}40`, borderRadius: 6, color: COLORS[selected.category], fontSize: '11px', textDecoration: 'none' }}>
-                Live Site
+                style={{ padding: '6px 12px', background: COLORS[selected.category] + '12', border: `1px solid ${COLORS[selected.category]}30`, borderRadius: 6, color: COLORS[selected.category], fontSize: '11px', textDecoration: 'none', fontWeight: 600 }}>
+                Live
               </a>
             )}
           </div>
@@ -203,8 +256,8 @@ export function Graph() {
 
       {/* Hint */}
       {!selected && (
-        <div style={{ position: 'fixed', bottom: 24, right: 24, color: '#555', fontSize: '11px', zIndex: 10 }}>
-          Click a node to see details. Drag to rearrange.
+        <div style={{ position: 'fixed', bottom: 28, right: 32, color: '#334155', fontSize: '10px', zIndex: 10, fontFamily: "'JetBrains Mono', monospace" }}>
+          click node / drag to rearrange
         </div>
       )}
     </div>
