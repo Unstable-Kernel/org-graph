@@ -183,13 +183,16 @@ export function Graph() {
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, cursor: 'grab' }} />
 
       {/* Header */}
-      <div style={{ position: 'fixed', top: 28, left: 32, zIndex: 10, animation: 'fadeIn 1s ease' }}>
-        <h1 style={{ color: '#fff', fontSize: '16px', fontWeight: 800, letterSpacing: '-0.5px' }}>
-          UNSTABLE KERNEL
-        </h1>
-        <p style={{ color: '#475569', fontSize: '11px', marginTop: 4, fontFamily: "'JetBrains Mono', monospace" }}>
-          // system dependency map
-        </p>
+      <div style={{ position: 'fixed', top: 28, left: 32, zIndex: 10, animation: 'fadeIn 1s ease', display: 'flex', alignItems: 'center', gap: 14 }}>
+        <img src="/org-graph/logo.png" alt="Unstable Kernel" style={{ height: 32, opacity: 0.9 }} />
+        <div>
+          <h1 style={{ color: '#fff', fontSize: '14px', fontWeight: 800, letterSpacing: '-0.5px' }}>
+            UNSTABLE KERNEL
+          </h1>
+          <p style={{ color: '#475569', fontSize: '10px', marginTop: 2, fontFamily: "'JetBrains Mono', monospace" }}>
+            // system dependency map
+          </p>
+        </div>
       </div>
 
       {/* Nav */}
